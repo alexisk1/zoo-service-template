@@ -350,18 +350,6 @@ def add_merge_results_graph():
     }
 
 def finalize_cwl(cwl):
-    graphs = cwl["$graph"]
-    for graph in graphs:
-        if graph["class"] == "Workflow":
-            print("Updating workflow graph")
-            updated_workflow_graph = update_workflow_graph(graph)
-            graphs.remove(graph)
-            graphs.append(updated_workflow_graph)
-        elif graph["class"] == "CommandLineTool" and graph["id"] == "process":
-            print("Updating process graph")
-            updated_process_graph = update_process_graph(graph)
-            graphs.remove(graph)
-            graphs.append(updated_process_graph)
 
     return cwl
 
