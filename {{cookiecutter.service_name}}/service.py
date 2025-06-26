@@ -363,15 +363,6 @@ def finalize_cwl(cwl):
             graphs.remove(graph)
             graphs.append(updated_process_graph)
 
-    print("Adding stageout_data_analysis graph")
-    graphs.append(add_stageout_data_analysis_graph())
-
-    print("Adding split_tiles graph")
-    graphs.append(add_split_tiles_graph())
-
-    print("Adding merge_results graph")
-    graphs.append(add_merge_results_graph())
-
     return cwl
 
 
