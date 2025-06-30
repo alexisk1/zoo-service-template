@@ -370,7 +370,18 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
     # Find the main workflow (the one with class == Workflow)
     workflow_obj = None
     if cwl.get("class") == "Workflow":
-        workflow_obj = cwl
+        for step in cwl.get("steps", []):
+            run_ref = step.get("run")
+            if isinstance(run_ref, dict):
+                if has_cuda_requirement(run_ref.get("hints", [])):
+                    use_gpu = True
+                    break
+            elif isinstance(run_ref, str) and run_ref.startswith("#"):
+                ref_id = run_ref.lstrip("#")
+                run_obj = graph_objects.get(ref_id)
+                if run_obj and has_cuda_requirement(run_obj.get("hints", [])):
+                    use_gpu = True
+                    break
     elif "$graph" in cwl:
         for entry in cwl["$graph"]:
             if entry.get("class") == "Workflow":
