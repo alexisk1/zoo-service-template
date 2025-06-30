@@ -175,7 +175,9 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
             namespace="zoo-job",
             storage_class=conf.get("main", {}).get("storageClass", "standard"),
             volume_size="10Gi",
-            default_container_resources=resources
+            default_container_resources=resources,
+            default_runtime_context={"cudaDeviceCount": 1}
+
         )
         context.default_container_resources = resources
 
@@ -189,8 +191,7 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
             conf=conf,
             inputs=inputs,
             outputs=outputs,
-            execution_handler=execution_handler,
-            default_runtime_context={"cudaDeviceCount": 1}
+            execution_handler=execution_handler
         )
 
         # Create and switch to working directory
