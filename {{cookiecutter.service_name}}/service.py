@@ -350,46 +350,6 @@ def add_merge_results_graph():
         }
     }
 
-def finalize_cwl(cwl):
-    def inject_gpu_resources(cwl_obj):
-        if not isinstance(cwl_obj, dict):
-            return cwl_obj
-
-        hints = cwl_obj.get("hints", [])
-        if isinstance(hints, dict):
-            hints = [hints]
-
-        for hint in hints:
-            if hint.get("class") == "cwltool:CUDARequirement":
-                # Found a GPU hint, now inject ResourceRequirement
-                gpu_resource = {
-                    "class": "ResourceRequirement",
-                    "coresMin": 1,
-                    "ramMin": 2048,
-                    "gpu": {
-                        "nvidia.com/gpu": 1
-                    }
-                }
-
-                # Append or update requirements
-                if "requirements" not in cwl_obj:
-                    cwl_obj["requirements"] = []
-                elif isinstance(cwl_obj["requirements"], dict):
-                    cwl_obj["requirements"] = [cwl_obj["requirements"]]
-
-                cwl_obj["requirements"].append(gpu_resource)
-                break
-
-        # Recursively inject into nested steps (if it's a workflow)
-        if cwl_obj.get("class") == "Workflow":
-            for step in cwl_obj.get("steps", []):
-                run = step.get("run")
-                if isinstance(run, dict):
-                    step["run"] = inject_gpu_resources(run)
-
-        return cwl_obj
-
-    return inject_gpu_resources(cwl)
 
 def prepare_resources_from_cwl(cwl: dict) -> dict:
     """
@@ -424,6 +384,7 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
         resources["limits"]["nvidia.com/gpu"] = "1"
 
     return resources
+
 def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
     try:
         logger.info(inputs)
@@ -437,34 +398,33 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
         with open(cwl_path, "r") as stream:
             cwl = yaml.safe_load(stream)
 
+        # Finalize CWL 
+        #finalized_cwl = finalize_cwl(cwl)
+        finalized_cwl = cwl
+
         # Prepare Kubernetes resource requests (CPU/GPU)
-        resources = prepare_resources_from_cwl(cwl)
+        resources = prepare_resources_from_cwl(finalized_cwl)
 
-        # Create the execution handler (CalrissianContext) safely for older pycalrissian
-        from pycalrissian.context import CalrissianContext
-
+        # Create the execution handler (CalrissianContext)
         execution_handler = CalrissianContext(
             namespace="zoo-job",
             storage_class=conf.get("main", {}).get("storageClass", "standard"),
             volume_size="10Gi"
         )
 
-        # Assign GPU/CPU resource limits manually (safe for older versions)
-        try:
-            execution_handler.default_container_resources = resources
-        except AttributeError:
-            logger.warning("default_container_resources not supported in this pycalrissian version.")
+        # For Calrissian 0.14.0: manually assign resource limits after instantiation
+        execution_handler.default_container_resources = resources
 
         # Set up and run the Calrissian workflow
         runner = ZooCalrissianRunner(
-            cwl=cwl,
+            cwl=finalized_cwl,
             conf=conf,
             inputs=inputs,
             outputs=outputs,
             execution_handler=execution_handler
         )
 
-        # Ensure working directory exists and change to it
+        # Ensure working directory exists and switch to it
         working_dir = os.path.join(conf["main"]["tmpPath"], runner.get_namespace_name())
         os.makedirs(working_dir, mode=0o777, exist_ok=True)
         os.chdir(working_dir)
