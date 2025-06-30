@@ -396,7 +396,7 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
         "requests": {"cpu": "1", "memory": "2Gi"},
         "limits": {"cpu": "1", "memory": "2Gi"}
     }
-
+    use_gpu = True
     if use_gpu:
         resources["requests"]["nvidia.com/gpu"] = "1"
         resources["limits"]["nvidia.com/gpu"] = "1"
