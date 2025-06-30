@@ -363,41 +363,35 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
     def has_cuda_requirement(hints):
         if isinstance(hints, dict):
             hints = [hints]
-        return any(h.get("class") == "cwltool:CUDARequirement" for h in hints)
+        return any(h.get("class") == "cwltool:CUDARequirement" for h in hints if isinstance(h, dict))
 
-    # Index graph entries by ID for lookup
+    # Index graph entries by ID (if $graph present)
     graph_objects = {entry.get("id", "").lstrip("#"): entry for entry in cwl.get("$graph", [])}
 
-    workflow = None
-    for entry in cwl.get("$graph", []):
-        if entry.get("class") == "Workflow":
-            workflow = entry
-            break
-
-    if workflow and "steps" in workflow:
-        steps = workflow["steps"]
-        if isinstance(steps, dict):
-            step_values = steps.values()
-        elif isinstance(steps, list):
-            step_values = steps
-        else:
-            step_values = []
-
-        for step in step_values:
+    def check_for_cuda_in_steps(workflow):
+        for step in workflow.get("steps", []):
             run_ref = step.get("run")
             if isinstance(run_ref, dict):
                 if has_cuda_requirement(run_ref.get("hints", [])):
-                    use_gpu = True
-                    break
-            elif isinstance(run_ref, str) and run_ref.startswith("#"):
-                ref_id = run_ref.lstrip("#")
-                run_obj = graph_objects.get(ref_id)
+                    return True
+            elif isinstance(run_ref, str):
+                run_obj = graph_objects.get(run_ref.lstrip("#"))
                 if run_obj and has_cuda_requirement(run_obj.get("hints", [])):
-                    use_gpu = True
-                    break
+                    return True
+        return False
+
+    if cwl.get("class") == "Workflow":
+        if check_for_cuda_in_steps(cwl):
+            use_gpu = True
     elif has_cuda_requirement(cwl.get("hints", [])):
         use_gpu = True
+    elif "$graph" in cwl:
+        for entry in cwl["$graph"]:
+            if entry.get("class") in {"CommandLineTool", "Workflow"} and has_cuda_requirement(entry.get("hints", [])):
+                use_gpu = True
+                break
 
+    # Resources
     resources = {
         "requests": {"cpu": "1", "memory": "2Gi"},
         "limits": {"cpu": "1", "memory": "2Gi"}
@@ -411,6 +405,8 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
         logger.info("NOT USING GPU!")
 
     return resources
+
+
 
 
 
