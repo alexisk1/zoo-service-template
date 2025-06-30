@@ -354,7 +354,6 @@ def add_merge_results_graph():
 def prepare_resources_from_cwl(cwl: dict) -> dict:
     """
     Analyze the CWL document and prepare Kubernetes resource requests/limits.
-
     Returns:
         dict: Kubernetes-compatible resource dict for CalrissianContext.
     """
@@ -365,14 +364,24 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
             hints = [hints]
         return any(h.get("class") == "cwltool:CUDARequirement" for h in hints)
 
-    # Index graph entries by ID for lookup
+    # Index graph entries by ID
     graph_objects = {entry.get("id", "").lstrip("#"): entry for entry in cwl.get("$graph", [])}
 
+    # Find the main workflow (the one with class == Workflow)
+    workflow_obj = None
     if cwl.get("class") == "Workflow":
-        for step in cwl.get("steps", []):
+        workflow_obj = cwl
+    elif "$graph" in cwl:
+        for entry in cwl["$graph"]:
+            if entry.get("class") == "Workflow":
+                workflow_obj = entry
+                break
+
+    # Check for CUDA hints in steps
+    if workflow_obj:
+        for step in workflow_obj.get("steps", []):
             run_ref = step.get("run")
             if isinstance(run_ref, dict):
-                # Inline CommandLineTool or subworkflow
                 if has_cuda_requirement(run_ref.get("hints", [])):
                     use_gpu = True
                     break
@@ -382,8 +391,8 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
                 if run_obj and has_cuda_requirement(run_obj.get("hints", [])):
                     use_gpu = True
                     break
-    elif has_cuda_requirement(cwl.get("hints", [])):
-        use_gpu = True
+    else:
+        logger.warning("No top-level Workflow object found in CWL.")
 
     resources = {
         "requests": {"cpu": "1", "memory": "2Gi"},
@@ -398,6 +407,7 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
         logger.info("NOT USING GPU!")
 
     return resources
+
 
 
 def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
