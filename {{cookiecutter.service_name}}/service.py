@@ -35,6 +35,7 @@ from pystac import read_file
 from pystac.stac_io import DefaultStacIO, StacIO
 from pystac.item_collection import ItemCollection
 from zoo_calrissian_runner import ExecutionHandler, ZooCalrissianRunner
+from pycalrissian.context import CalrissianContext
 
 
 logger.remove()
@@ -424,68 +425,67 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
 
     return resources
 
-def {{cookiecutter.workflow_id |replace("-", "_")  }}(conf, inputs, outputs):  # noqa
-
+def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
     try:
         logger.info(inputs)
-        with open(
-            os.path.join(
-                pathlib.Path(os.path.realpath(__file__)).parent.absolute(),
-                "app-package.cwl",
-            ),
-            "r",
-        ) as stream:
+
+        cwl_path = os.path.join(
+            pathlib.Path(os.path.realpath(__file__)).parent.absolute(),
+            "app-package.cwl",
+        )
+
+        with open(cwl_path, "r") as stream:
             cwl = yaml.safe_load(stream)
 
-        execution_handler = SimpleExecutionHandler(conf=conf)
-
+        # Prepare Kubernetes resource limits (e.g., GPU)
         resources = prepare_resources_from_cwl(cwl)
+
+        # Initialize Calrissian execution context with resources
+        execution_handler = CalrissianContext(
+            namespace="zoo-job",
+            storage_class=conf.get("main", {}).get("storageClass", "standard"),
+            volume_size="10Gi",
+            default_container_resources=resources
+        )
+
+        # Initialize Calrissian runner
         runner = ZooCalrissianRunner(
             cwl=cwl,
             conf=conf,
             inputs=inputs,
             outputs=outputs,
-            execution_handler=execution_handler,
-            default_container_resources=resources
+            execution_handler=execution_handler
         )
 
+        # Set working directory for the job
         working_dir = os.path.join(conf["main"]["tmpPath"], runner.get_namespace_name())
-        os.makedirs(
-            working_dir,
-            mode=0o777,
-            exist_ok=True,
-        )
+        os.makedirs(working_dir, mode=0o777, exist_ok=True)
         os.chdir(working_dir)
 
+        # Execute the workflow
         exit_status = runner.execute()
 
         if exit_status == zoo.SERVICE_SUCCEEDED:
-            """logger.info(f"Setting Collection into output key {list(outputs.keys())[0]}")
-            outputs["stac_catalog"]["value"] = json.dumps(
-                execution_handler.results, indent=2
-            )"""
+            # Optionally handle outputs here
             return zoo.SERVICE_SUCCEEDED
-
         else:
             conf["lenv"]["message"] = zoo._("Execution failed")
             logger.error("Execution failed")
             return zoo.SERVICE_FAILED
 
     except Exception as e:
-
         logger.error("ERROR in processing execution template...")
         logger.error("Try to fetch the tool logs if any...")
 
         try:
-            tool_logs = runner.execution.get_tool_logs()
-            execution_handler.handle_outputs(None, None, None, tool_logs)
-        except Exception as e:
-            logger.error(f"Fetching tool logs failed! ({str(e)})")
+            if 'runner' in locals() and hasattr(runner, 'execution'):
+                tool_logs = runner.execution.get_tool_logs()
+                execution_handler.handle_outputs(None, None, None, tool_logs)
+        except Exception as tool_log_err:
+            logger.error(f"Fetching tool logs failed! ({str(tool_log_err)})")
 
         stack = traceback.format_exc()
-
         logger.error(stack)
-
         conf["lenv"]["message"] = zoo._(f"Exception during execution...\n{stack}\n")
 
         return zoo.SERVICE_FAILED
