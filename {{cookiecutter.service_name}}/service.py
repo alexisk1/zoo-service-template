@@ -174,9 +174,7 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
         context = CalrissianContext(
             namespace="zoo-job",
             storage_class=conf.get("main", {}).get("storageClass", "standard"),
-            volume_size="10Gi",
-            default_container_resources=resources,
-            default_runtime_context={"cudaDeviceCount": 1}
+            volume_size="10Gi"
 
         )
         context.default_container_resources = resources
