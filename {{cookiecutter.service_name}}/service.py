@@ -2,11 +2,9 @@ from __future__ import annotations
 from typing import Dict
 import pathlib
 
-
 try:
     import zoo
 except ImportError:
-
     class ZooStub(object):
         def __init__(self):
             self.SERVICE_SUCCEEDED = 3
@@ -25,7 +23,7 @@ import sys
 import traceback
 import yaml
 import json
-import boto3  # noqa: F401
+import boto3  # noqa
 import botocore
 from loguru import logger
 from urllib.parse import urlparse
@@ -37,100 +35,63 @@ from pystac.item_collection import ItemCollection
 from zoo_calrissian_runner import ExecutionHandler, ZooCalrissianRunner
 from pycalrissian.context import CalrissianContext
 
-
 logger.remove()
 logger.add(sys.stderr, level="INFO")
 
 
-
 class SimpleExecutionHandler(ExecutionHandler):
-    def __init__(self, conf):
+    def __init__(self, conf, resources):
         super().__init__()
         self.conf = conf
         self.results = None
+        self._resources = resources  # 🧠 Store pod resources
+
+    def get_pod_resources(self):
+        logger.info("get_pod_resources")
+        return self._resources
 
     def pre_execution_hook(self):
-
         logger.info("Pre execution hook")
         input_request = self.conf['request']['jrequest']
-        import json
         service_name = json.loads(input_request)['inputs']['thematic_service_name']
         logger.info(f"Thematic service name: {service_name}")
-        
-        stageout_yaml = yaml.safe_load(open("/assets/stageout.yaml","rb"))
-        
+
+        stageout_yaml = yaml.safe_load(open("/assets/stageout.yaml", "rb"))
         logger.info(f"Stageout: {stageout_yaml}")
-        logger.info("WRAPPER_STAGE_OUT" in os.environ)
 
         self.stageout_file_path = f"/{self.conf['main']['tmpPath']}/stageout{self.conf['lenv']['usid']}.yaml"
-        stageout_file=open(self.stageout_file_path,"w")
-        yaml.dump(stageout_yaml,stageout_file)
-        stageout_file.close()
+        with open(self.stageout_file_path, "w") as stageout_file:
+            yaml.dump(stageout_yaml, stageout_file)
         os.environ["WRAPPER_STAGE_OUT"] = self.stageout_file_path
 
-        logger.info("WRAPPER_STAGE_OUT" in os.environ)
-
     def post_execution_hook(self, log, output, usage_report, tool_logs):
-
-        # unset HTTP proxy or else the S3 client will use it and fail
         os.environ.pop("HTTP_PROXY", None)
-
         logger.info("Post execution hook")
 
-
     def get_pod_env_vars(self):
-        # This method is used to set environment variables for the pod
-        # spawned by calrissian.
-
         logger.info("get_pod_env_vars")
-        
-        env_vars = {
+        return {
             "ANOTHER_VAR": self.conf['pod_env_vars']['ANOTHER_VAR'],
             "S3_BUCKET_NAME": self.conf['pod_env_vars']['S3_BUCKET_ADDRESS'],
-            "AWS_ACCESS_KEY_ID":self.conf['pod_env_vars']['BUCKET_1_AK'],
+            "AWS_ACCESS_KEY_ID": self.conf['pod_env_vars']['BUCKET_1_AK'],
             "AWS_SECRET_ACCESS_KEY": self.conf['pod_env_vars']['BUCKET_1_AS'],
             "AWS_DEFAULT_REGION": "eu-central-1",
             "PROCESS_ID": self.conf["lenv"]["usid"]
         }
-        
-
-        return env_vars
 
     def get_pod_node_selector(self):
-        # This method is used to set node selectors for the pod
-        # spawned by calrissian.
-
         logger.info("get_pod_node_selector")
-
-        node_selector = {}
-
-        return node_selector
+        return {}
 
     def get_additional_parameters(self):
-        # sets the additional parameters for the execution
-        # of the wrapped Application Package
-
         logger.info("get_additional_parameters")
-        additional_parameters: Dict[str, str] = {}
         additional_parameters = self.conf.get("additional_parameters", {})
-        
         additional_parameters["sub_path"] = self.conf["lenv"]["usid"]
-
-        logger.info(f"additional_parameters: {additional_parameters.keys()}")
-        import json
+        logger.info(f"additional_parameters: {list(additional_parameters.keys())}")
         logger.info(json.dumps(self.conf))
         return additional_parameters
 
     def handle_outputs(self, log, output, usage_report, tool_logs):
-        """
-        Handle the output files of the execution.
-
-        :param log: The application log file of the execution.
-        :param output: The output file of the execution.
-        :param usage_report: The metrics file.
-        :param tool_logs: A list of paths to individual workflow step logs.
-
-        """
         try:
             logger.info("handle_outputs")
             logger.info(tool_logs)
@@ -140,21 +101,13 @@ class SimpleExecutionHandler(ExecutionHandler):
         except Exception as e:
             logger.error("ERROR in handle_outputs...")
             logger.error(traceback.format_exc())
-            raise (e)
+            raise e
 
     def get_secrets(self):
         return {}
 
 
-
-
 def prepare_resources_from_cwl(cwl: dict) -> dict:
-    """
-    Analyze the CWL document and prepare Kubernetes resource requests/limits.
-
-    Returns:
-        dict: Kubernetes-compatible resource dict for CalrissianContext.
-    """
     use_gpu = False
 
     def has_cuda_requirement(hints):
@@ -162,7 +115,6 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
             hints = [hints]
         return any(h.get("class") == "cwltool:CUDARequirement" for h in hints if isinstance(h, dict))
 
-    # Index graph entries by ID (if $graph present)
     graph_objects = {entry.get("id", "").lstrip("#"): entry for entry in cwl.get("$graph", [])}
 
     def check_for_cuda_in_steps(workflow):
@@ -187,13 +139,13 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
             if entry.get("class") in {"CommandLineTool", "Workflow"} and has_cuda_requirement(entry.get("hints", [])):
                 use_gpu = True
                 break
+    use_gpu = True
 
-    # Resources
     resources = {
         "requests": {"cpu": "1", "memory": "2Gi"},
-        "limits": {"cpu": "1", "memory": "2Gi"}
+        "limits": {"cpu": "1", "memory": "2Gi"},
     }
-    use_gpu = True
+
     if use_gpu:
         resources["requests"]["nvidia.com/gpu"] = "1"
         resources["limits"]["nvidia.com/gpu"] = "1"
@@ -204,54 +156,31 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
     return resources
 
 
-
-
-import inspect
 def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
     try:
         logger.info(inputs)
 
-        # Load the CWL app package
-        cwl_path = os.path.join(
-            pathlib.Path(os.path.realpath(__file__)).parent.absolute(),
-            "app-package.cwl",
-        )
-
+        cwl_path = os.path.join(pathlib.Path(__file__).parent.absolute(), "app-package.cwl")
         with open(cwl_path, "r") as stream:
             cwl = yaml.safe_load(stream)
 
-        # Finalize CWL 
-        #finalized_cwl = finalize_cwl(cwl)
         finalized_cwl = cwl
-
-        # Prepare Kubernetes resource requests (CPU/GPU)
         resources = prepare_resources_from_cwl(finalized_cwl)
-        logger.info(resources)
-        context = CalrissianContext(
-            namespace="zoo-job",
-            storage_class=conf.get("main", {}).get("storageClass", "standard"),
-            volume_size="10Gi"
-        )
-        context.default_container_resources = resources
+        logger.info(f"Resources: {resources}")
 
-        execution_handler = SimpleExecutionHandler(conf)
-        execution_handler.context = context 
-        print(inspect.signature(CalrissianContext.__init__))
-        # Set up and run the Calrissian workflow
+        execution_handler = SimpleExecutionHandler(conf=conf, resources=resources)
         runner = ZooCalrissianRunner(
             cwl=finalized_cwl,
             conf=conf,
             inputs=inputs,
             outputs=outputs,
-            execution_handler=execution_handler
+            execution_handler=execution_handler,
         )
 
-        # Ensure working directory exists and switch to it
         working_dir = os.path.join(conf["main"]["tmpPath"], runner.get_namespace_name())
         os.makedirs(working_dir, mode=0o777, exist_ok=True)
         os.chdir(working_dir)
 
-        # Execute the workflow
         exit_status = runner.execute()
 
         if exit_status == zoo.SERVICE_SUCCEEDED:
@@ -272,7 +201,5 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
         except Exception as tool_log_err:
             logger.error(f"Fetching tool logs failed! ({str(tool_log_err)})")
 
-        stack = traceback.format_exc()
-        logger.error(stack)
-        conf["lenv"]["message"] = zoo._(f"Exception during execution...\n{stack}\n")
+        conf["lenv"]["message"] = zoo._(f"Exception during execution...\n{traceback.format_exc()}\n")
         return zoo.SERVICE_FAILED
