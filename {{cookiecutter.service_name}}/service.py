@@ -190,6 +190,7 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
             inputs=inputs,
             outputs=outputs,
             execution_handler=execution_handler,
+            default_runtime_context={"cudaDeviceCount": 1}
         )
 
         # Create and switch to working directory
