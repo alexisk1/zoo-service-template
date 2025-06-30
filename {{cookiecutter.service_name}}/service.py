@@ -404,16 +404,15 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
 
         # Prepare Kubernetes resource requests (CPU/GPU)
         resources = prepare_resources_from_cwl(finalized_cwl)
-
-        # Create the execution handler (CalrissianContext)
-        execution_handler = CalrissianContext(
+        context = CalrissianContext(
             namespace="zoo-job",
             storage_class=conf.get("main", {}).get("storageClass", "standard"),
             volume_size="10Gi"
         )
+        context.default_container_resources = resources
 
-        # For Calrissian 0.14.0: manually assign resource limits after instantiation
-        execution_handler.default_container_resources = resources
+        execution_handler = SimpleExecutionHandler(conf)
+        execution_handler.context = context 
 
         # Set up and run the Calrissian workflow
         runner = ZooCalrissianRunner(
