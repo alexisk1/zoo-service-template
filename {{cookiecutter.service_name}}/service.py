@@ -44,11 +44,14 @@ class SimpleExecutionHandler(ExecutionHandler):
         super().__init__()
         self.conf = conf
         self.results = None
-        self._resources = resources  # 🧠 Store pod resources
+        self._resources = resources  # Store pod resources
 
     def get_pod_resources(self):
         logger.info("get_pod_resources: " + str(self._resources))
-        return self._resources
+        return {
+            "requests": {"cpu": "1", "memory": "2Gi", "nvidia.com/gpu": "1"},
+            "limits": {"cpu": "1", "memory": "2Gi", "nvidia.com/gpu": "1"}
+        }
 
     def pre_execution_hook(self):
         logger.info("Pre execution hook")
