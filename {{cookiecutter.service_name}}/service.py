@@ -424,11 +424,11 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
         resources["limits"]["nvidia.com/gpu"] = "1"
 
     return resources
-
 def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
     try:
         logger.info(inputs)
 
+        # Load the CWL app package
         cwl_path = os.path.join(
             pathlib.Path(os.path.realpath(__file__)).parent.absolute(),
             "app-package.cwl",
@@ -437,18 +437,25 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
         with open(cwl_path, "r") as stream:
             cwl = yaml.safe_load(stream)
 
-        # Prepare Kubernetes resource limits (e.g., GPU)
+        # Prepare Kubernetes resource requests (CPU/GPU)
         resources = prepare_resources_from_cwl(cwl)
 
-        # Initialize Calrissian execution context with resources
+        # Create the execution handler (CalrissianContext) safely for older pycalrissian
+        from pycalrissian.context import CalrissianContext
+
         execution_handler = CalrissianContext(
             namespace="zoo-job",
             storage_class=conf.get("main", {}).get("storageClass", "standard"),
-            volume_size="10Gi",
-            default_container_resources=resources
+            volume_size="10Gi"
         )
 
-        # Initialize Calrissian runner
+        # Assign GPU/CPU resource limits manually (safe for older versions)
+        try:
+            execution_handler.default_container_resources = resources
+        except AttributeError:
+            logger.warning("default_container_resources not supported in this pycalrissian version.")
+
+        # Set up and run the Calrissian workflow
         runner = ZooCalrissianRunner(
             cwl=cwl,
             conf=conf,
@@ -457,7 +464,7 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
             execution_handler=execution_handler
         )
 
-        # Set working directory for the job
+        # Ensure working directory exists and change to it
         working_dir = os.path.join(conf["main"]["tmpPath"], runner.get_namespace_name())
         os.makedirs(working_dir, mode=0o777, exist_ok=True)
         os.chdir(working_dir)
@@ -466,7 +473,6 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
         exit_status = runner.execute()
 
         if exit_status == zoo.SERVICE_SUCCEEDED:
-            # Optionally handle outputs here
             return zoo.SERVICE_SUCCEEDED
         else:
             conf["lenv"]["message"] = zoo._("Execution failed")
@@ -487,5 +493,4 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
         stack = traceback.format_exc()
         logger.error(stack)
         conf["lenv"]["message"] = zoo._(f"Exception during execution...\n{stack}\n")
-
         return zoo.SERVICE_FAILED
