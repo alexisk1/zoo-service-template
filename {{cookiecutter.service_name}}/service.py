@@ -354,6 +354,7 @@ def add_merge_results_graph():
 def prepare_resources_from_cwl(cwl: dict) -> dict:
     """
     Analyze the CWL document and prepare Kubernetes resource requests/limits.
+
     Returns:
         dict: Kubernetes-compatible resource dict for CalrissianContext.
     """
@@ -364,33 +365,25 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
             hints = [hints]
         return any(h.get("class") == "cwltool:CUDARequirement" for h in hints)
 
-    # Index graph entries by ID
+    # Index graph entries by ID for lookup
     graph_objects = {entry.get("id", "").lstrip("#"): entry for entry in cwl.get("$graph", [])}
 
-    # Find the main workflow (the one with class == Workflow)
-    workflow_obj = None
-    if cwl.get("class") == "Workflow":
-        for step in cwl.get("steps", []):
-            run_ref = step.get("run")
-            if isinstance(run_ref, dict):
-                if has_cuda_requirement(run_ref.get("hints", [])):
-                    use_gpu = True
-                    break
-            elif isinstance(run_ref, str) and run_ref.startswith("#"):
-                ref_id = run_ref.lstrip("#")
-                run_obj = graph_objects.get(ref_id)
-                if run_obj and has_cuda_requirement(run_obj.get("hints", [])):
-                    use_gpu = True
-                    break
-    elif "$graph" in cwl:
-        for entry in cwl["$graph"]:
-            if entry.get("class") == "Workflow":
-                workflow_obj = entry
-                break
+    workflow = None
+    for entry in cwl.get("$graph", []):
+        if entry.get("class") == "Workflow":
+            workflow = entry
+            break
 
-    # Check for CUDA hints in steps
-    if workflow_obj:
-        for step in workflow_obj.get("steps", []):
+    if workflow and "steps" in workflow:
+        steps = workflow["steps"]
+        if isinstance(steps, dict):
+            step_values = steps.values()
+        elif isinstance(steps, list):
+            step_values = steps
+        else:
+            step_values = []
+
+        for step in step_values:
             run_ref = step.get("run")
             if isinstance(run_ref, dict):
                 if has_cuda_requirement(run_ref.get("hints", [])):
@@ -402,8 +395,8 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
                 if run_obj and has_cuda_requirement(run_obj.get("hints", [])):
                     use_gpu = True
                     break
-    else:
-        logger.warning("No top-level Workflow object found in CWL.")
+    elif has_cuda_requirement(cwl.get("hints", [])):
+        use_gpu = True
 
     resources = {
         "requests": {"cpu": "1", "memory": "2Gi"},
