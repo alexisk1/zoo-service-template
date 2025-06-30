@@ -382,6 +382,10 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
     if use_gpu:
         resources["requests"]["nvidia.com/gpu"] = "1"
         resources["limits"]["nvidia.com/gpu"] = "1"
+        logger.info("USING GPU!")
+    else:
+        logger.info("NOT USING GPU!")
+
 
     return resources
 
