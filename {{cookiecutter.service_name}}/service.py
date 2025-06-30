@@ -47,7 +47,7 @@ class SimpleExecutionHandler(ExecutionHandler):
         self._resources = resources  # 🧠 Store pod resources
 
     def get_pod_resources(self):
-        logger.info("get_pod_resources")
+        logger.info("get_pod_resources: " + str(self._resources))
         return self._resources
 
     def pre_execution_hook(self):
@@ -155,20 +155,34 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
 
     return resources
 
-
 def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
     try:
         logger.info(inputs)
 
+        # Load CWL definition
         cwl_path = os.path.join(pathlib.Path(__file__).parent.absolute(), "app-package.cwl")
         with open(cwl_path, "r") as stream:
             cwl = yaml.safe_load(stream)
 
         finalized_cwl = cwl
+
+        # Detect if GPU is needed and define resources accordingly
         resources = prepare_resources_from_cwl(finalized_cwl)
         logger.info(f"Resources: {resources}")
 
-        execution_handler = SimpleExecutionHandler(conf=conf, resources=resources)
+        # Create a Calrissian context with resource limits
+        context = CalrissianContext(
+            namespace="zoo-job",
+            storage_class=conf.get("main", {}).get("storageClass", "standard"),
+            volume_size="10Gi"
+        )
+        context.default_container_resources = resources
+
+        # Setup execution handler and assign context with resource limits
+        execution_handler = SimpleExecutionHandler(conf=conf)
+        execution_handler.context = context
+
+        # Create the runner
         runner = ZooCalrissianRunner(
             cwl=finalized_cwl,
             conf=conf,
@@ -177,10 +191,12 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
             execution_handler=execution_handler,
         )
 
+        # Create and switch to working directory
         working_dir = os.path.join(conf["main"]["tmpPath"], runner.get_namespace_name())
         os.makedirs(working_dir, mode=0o777, exist_ok=True)
         os.chdir(working_dir)
 
+        # Execute the workflow
         exit_status = runner.execute()
 
         if exit_status == zoo.SERVICE_SUCCEEDED:
