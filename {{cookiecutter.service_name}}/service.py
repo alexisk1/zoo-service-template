@@ -365,12 +365,23 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
             hints = [hints]
         return any(h.get("class") == "cwltool:CUDARequirement" for h in hints)
 
+    # Index graph entries by ID for lookup
+    graph_objects = {entry.get("id", "").lstrip("#"): entry for entry in cwl.get("$graph", [])}
+
     if cwl.get("class") == "Workflow":
         for step in cwl.get("steps", []):
-            run = step.get("run", {})
-            if isinstance(run, dict) and has_cuda_requirement(run.get("hints", [])):
-                use_gpu = True
-                break
+            run_ref = step.get("run")
+            if isinstance(run_ref, dict):
+                # Inline CommandLineTool or subworkflow
+                if has_cuda_requirement(run_ref.get("hints", [])):
+                    use_gpu = True
+                    break
+            elif isinstance(run_ref, str) and run_ref.startswith("#"):
+                ref_id = run_ref.lstrip("#")
+                run_obj = graph_objects.get(ref_id)
+                if run_obj and has_cuda_requirement(run_obj.get("hints", [])):
+                    use_gpu = True
+                    break
     elif has_cuda_requirement(cwl.get("hints", [])):
         use_gpu = True
 
@@ -386,8 +397,8 @@ def prepare_resources_from_cwl(cwl: dict) -> dict:
     else:
         logger.info("NOT USING GPU!")
 
-
     return resources
+
 
 def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
     try:
