@@ -179,7 +179,7 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
         context.default_container_resources = resources
 
         # Setup execution handler and assign context with resource limits
-        execution_handler = SimpleExecutionHandler(conf=conf)
+        execution_handler = SimpleExecutionHandler(conf=conf, resources=resources)
         execution_handler.context = context
 
         # Create the runner
