@@ -350,10 +350,79 @@ def add_merge_results_graph():
     }
 
 def finalize_cwl(cwl):
+    def inject_gpu_resources(cwl_obj):
+        if not isinstance(cwl_obj, dict):
+            return cwl_obj
 
-    return cwl
+        hints = cwl_obj.get("hints", [])
+        if isinstance(hints, dict):
+            hints = [hints]
 
+        for hint in hints:
+            if hint.get("class") == "cwltool:CUDARequirement":
+                # Found a GPU hint, now inject ResourceRequirement
+                gpu_resource = {
+                    "class": "ResourceRequirement",
+                    "coresMin": 1,
+                    "ramMin": 2048,
+                    "gpu": {
+                        "nvidia.com/gpu": 1
+                    }
+                }
 
+                # Append or update requirements
+                if "requirements" not in cwl_obj:
+                    cwl_obj["requirements"] = []
+                elif isinstance(cwl_obj["requirements"], dict):
+                    cwl_obj["requirements"] = [cwl_obj["requirements"]]
+
+                cwl_obj["requirements"].append(gpu_resource)
+                break
+
+        # Recursively inject into nested steps (if it's a workflow)
+        if cwl_obj.get("class") == "Workflow":
+            for step in cwl_obj.get("steps", []):
+                run = step.get("run")
+                if isinstance(run, dict):
+                    step["run"] = inject_gpu_resources(run)
+
+        return cwl_obj
+
+    return inject_gpu_resources(cwl)
+
+def prepare_resources_from_cwl(cwl: dict) -> dict:
+    """
+    Analyze the CWL document and prepare Kubernetes resource requests/limits.
+
+    Returns:
+        dict: Kubernetes-compatible resource dict for CalrissianContext.
+    """
+    use_gpu = False
+
+    def has_cuda_requirement(hints):
+        if isinstance(hints, dict):
+            hints = [hints]
+        return any(h.get("class") == "cwltool:CUDARequirement" for h in hints)
+
+    if cwl.get("class") == "Workflow":
+        for step in cwl.get("steps", []):
+            run = step.get("run", {})
+            if isinstance(run, dict) and has_cuda_requirement(run.get("hints", [])):
+                use_gpu = True
+                break
+    elif has_cuda_requirement(cwl.get("hints", [])):
+        use_gpu = True
+
+    resources = {
+        "requests": {"cpu": "1", "memory": "2Gi"},
+        "limits": {"cpu": "1", "memory": "2Gi"}
+    }
+
+    if use_gpu:
+        resources["requests"]["nvidia.com/gpu"] = "1"
+        resources["limits"]["nvidia.com/gpu"] = "1"
+
+    return resources
 
 def {{cookiecutter.workflow_id |replace("-", "_")  }}(conf, inputs, outputs):  # noqa
 
@@ -370,13 +439,14 @@ def {{cookiecutter.workflow_id |replace("-", "_")  }}(conf, inputs, outputs):  #
 
         execution_handler = SimpleExecutionHandler(conf=conf)
 
-        finalized_cwl = finalize_cwl(cwl)
+        resources = prepare_resources_from_cwl(cwl)
         runner = ZooCalrissianRunner(
-            cwl=finalized_cwl,
+            cwl=cwl,
             conf=conf,
             inputs=inputs,
             outputs=outputs,
             execution_handler=execution_handler,
+            default_container_resources=resources
         )
 
         working_dir = os.path.join(conf["main"]["tmpPath"], runner.get_namespace_name())
