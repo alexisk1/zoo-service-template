@@ -84,7 +84,18 @@ class SimpleExecutionHandler(ExecutionHandler):
 
     def get_pod_node_selector(self):
         logger.info("get_pod_node_selector")
-        return {}
+        # If GPU is requested, add EKS GPU node selector
+        node_selector = {}
+        gpu_requested = (
+            "nvidia.com/gpu" in self._resources.get("requests", {}) and
+            int(self._resources["requests"]["nvidia.com/gpu"]) > 0
+        )
+        if gpu_requested:
+            node_selector["eks.amazonaws.com/gpu"] = "true"
+            logger.info("NodeSelector: Targeting GPU nodes!")
+        else:
+            logger.info("NodeSelector: CPU node (no GPU needed)")
+        return node_selector
 
     def get_additional_parameters(self):
         logger.info("get_additional_parameters")
@@ -109,10 +120,51 @@ class SimpleExecutionHandler(ExecutionHandler):
     def get_secrets(self):
         return {}
 
+def has_gpu_hint(hints):
+    if isinstance(hints, dict):
+        hints = [hints]
+    for h in hints:
+        if not isinstance(h, dict):
+            continue
+        # Check for several GPU hint patterns
+        if h.get("class") == "cwltool:CUDARequirement":
+            return True
+        if h.get("gpuMin", 0) > 0:
+            return True
+        if h.get("nvidia.com/gpu", 0) > 0:
+            return True
+    return False
+def has_gpu_min_hint(cwl: dict) -> bool:
+    """
+    Returns True if any 'hints' entry in the given CWL object or its $graph
+    contains a top-level gpuMin: >0. Supports both dict and list hints.
+    """
+    def gpu_min_in_hints(hints):
+        if isinstance(hints, dict):
+            # Flat dict as hints
+            return hints.get("gpuMin", 0) > 0
+        if isinstance(hints, list):
+            # List of dicts as hints (common pattern)
+            for hint in hints:
+                if isinstance(hint, dict) and hint.get("gpuMin", 0) > 0:
+                    return True
+        return False
+
+    # Check top-level hints
+    if gpu_min_in_hints(cwl.get("hints", {})):
+        return True
+
+    # Check in $graph if present (for packed workflows)
+    for entry in cwl.get("$graph", []):
+        if gpu_min_in_hints(entry.get("hints", {})):
+            return True
+
+    return False
+
 
 def prepare_resources_from_cwl(cwl: dict) -> dict:
-    use_gpu = False
-
+    use_gpu = has_gpu_min_hint(cwl)
+    
     def has_cuda_requirement(hints):
         if isinstance(hints, dict):
             hints = [hints]
