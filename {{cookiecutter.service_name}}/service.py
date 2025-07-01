@@ -84,17 +84,19 @@ class SimpleExecutionHandler(ExecutionHandler):
 
     def get_pod_node_selector(self):
         logger.info("get_pod_node_selector")
-        # If GPU is requested, add EKS GPU node selector
         node_selector = {}
         gpu_requested = (
             "nvidia.com/gpu" in self._resources.get("requests", {}) and
             int(self._resources["requests"]["nvidia.com/gpu"]) > 0
         )
         if gpu_requested:
-            node_selector["eks.amazonaws.com/gpu"] = "true"
-            logger.info("NodeSelector: Targeting GPU nodes!")
+            # Use the current GPU label
+            node_selector["accelerator"] = "nvidia"
+            logger.info("NodeSelector: Targeting GPU nodes with accelerator=nvidia!")
         else:
-            logger.info("NodeSelector: CPU node (no GPU needed)")
+            # Optionally target CPU nodegroup
+            node_selector["nodegroup"] = "cpu"
+            logger.info("NodeSelector: Targeting CPU nodegroup!")
         return node_selector
 
     def get_additional_parameters(self):
@@ -164,7 +166,7 @@ def has_gpu_min_hint(cwl: dict) -> bool:
 
 def prepare_resources_from_cwl(cwl: dict) -> dict:
     use_gpu = has_gpu_min_hint(cwl)
-    
+
     def has_cuda_requirement(hints):
         if isinstance(hints, dict):
             hints = [hints]
