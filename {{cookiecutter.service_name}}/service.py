@@ -40,18 +40,10 @@ logger.add(sys.stderr, level="INFO")
 
 
 class SimpleExecutionHandler(ExecutionHandler):
-    def __init__(self, conf, resources):
+    def __init__(self, conf):
         super().__init__()
         self.conf = conf
         self.results = None
-        self._resources = resources  # Store pod resources
-
-    def get_pod_resources(self):
-        logger.info("get_pod_resources: " + str(self._resources))
-        return {
-            "requests": {"cpu": "1", "memory": "2Gi", "nvidia.com/gpu": "1"},
-            "limits": {"cpu": "1", "memory": "2Gi", "nvidia.com/gpu": "1"}
-        }
 
     def pre_execution_hook(self):
         logger.info("Pre execution hook")
@@ -82,22 +74,6 @@ class SimpleExecutionHandler(ExecutionHandler):
             "PROCESS_ID": self.conf["lenv"]["usid"]
         }
 
-    def get_pod_node_selector(self):
-        logger.info("get_pod_node_selector")
-        node_selector = {}
-        gpu_requested = (
-            "nvidia.com/gpu" in self._resources.get("requests", {}) and
-            int(self._resources["requests"]["nvidia.com/gpu"]) > 0
-        )
-        if gpu_requested:
-            # Use the current GPU label
-            node_selector["accelerator"] = "nvidia"
-            logger.info("NodeSelector: Targeting GPU nodes with accelerator=nvidia!")
-        else:
-            # Optionally target CPU nodegroup
-            node_selector["nodegroup"] = "cpu"
-            logger.info("NodeSelector: Targeting CPU nodegroup!")
-        return node_selector
 
     def get_additional_parameters(self):
         logger.info("get_additional_parameters")
@@ -122,95 +98,6 @@ class SimpleExecutionHandler(ExecutionHandler):
     def get_secrets(self):
         return {}
 
-def has_gpu_hint(hints):
-    if isinstance(hints, dict):
-        hints = [hints]
-    for h in hints:
-        if not isinstance(h, dict):
-            continue
-        # Check for several GPU hint patterns
-        if h.get("class") == "cwltool:CUDARequirement":
-            return True
-        if h.get("gpuMin", 0) > 0:
-            return True
-        if h.get("nvidia.com/gpu", 0) > 0:
-            return True
-    return False
-def has_gpu_min_hint(cwl: dict) -> bool:
-    """
-    Returns True if any 'hints' entry in the given CWL object or its $graph
-    contains a top-level gpuMin: >0. Supports both dict and list hints.
-    """
-    def gpu_min_in_hints(hints):
-        if isinstance(hints, dict):
-            # Flat dict as hints
-            return hints.get("gpuMin", 0) > 0
-        if isinstance(hints, list):
-            # List of dicts as hints (common pattern)
-            for hint in hints:
-                if isinstance(hint, dict) and hint.get("gpuMin", 0) > 0:
-                    return True
-        return False
-
-    # Check top-level hints
-    if gpu_min_in_hints(cwl.get("hints", {})):
-        return True
-
-    # Check in $graph if present (for packed workflows)
-    for entry in cwl.get("$graph", []):
-        if gpu_min_in_hints(entry.get("hints", {})):
-            return True
-
-    return False
-
-
-def prepare_resources_from_cwl(cwl: dict) -> dict:
-    use_gpu = has_gpu_min_hint(cwl)
-
-    def has_cuda_requirement(hints):
-        if isinstance(hints, dict):
-            hints = [hints]
-        return any(h.get("class") == "cwltool:CUDARequirement" for h in hints if isinstance(h, dict))
-
-    graph_objects = {entry.get("id", "").lstrip("#"): entry for entry in cwl.get("$graph", [])}
-
-    def check_for_cuda_in_steps(workflow):
-        for step in workflow.get("steps", []):
-            run_ref = step.get("run")
-            if isinstance(run_ref, dict):
-                if has_cuda_requirement(run_ref.get("hints", [])):
-                    return True
-            elif isinstance(run_ref, str):
-                run_obj = graph_objects.get(run_ref.lstrip("#"))
-                if run_obj and has_cuda_requirement(run_obj.get("hints", [])):
-                    return True
-        return False
-
-    if cwl.get("class") == "Workflow":
-        if check_for_cuda_in_steps(cwl):
-            use_gpu = True
-    elif has_cuda_requirement(cwl.get("hints", [])):
-        use_gpu = True
-    elif "$graph" in cwl:
-        for entry in cwl["$graph"]:
-            if entry.get("class") in {"CommandLineTool", "Workflow"} and has_cuda_requirement(entry.get("hints", [])):
-                use_gpu = True
-                break
-    use_gpu = True
-
-    resources = {
-        "requests": {"cpu": "1", "memory": "2Gi"},
-        "limits": {"cpu": "1", "memory": "2Gi"},
-    }
-
-    if use_gpu:
-        resources["requests"]["nvidia.com/gpu"] = "1"
-        resources["limits"]["nvidia.com/gpu"] = "1"
-        logger.info("USING GPU!")
-    else:
-        logger.info("NOT USING GPU!")
-
-    return resources
 
 def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # noqa
     try:
@@ -223,10 +110,6 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
 
         finalized_cwl = cwl
 
-        # Detect if GPU is needed and define resources accordingly
-        resources = prepare_resources_from_cwl(finalized_cwl)
-        logger.info(f"Resources: {resources}")
-
         # Create a Calrissian context with resource limits
         context = CalrissianContext(
             namespace="zoo-job",
@@ -234,10 +117,8 @@ def {{cookiecutter.workflow_id |replace("-", "_")}}(conf, inputs, outputs):  # n
             volume_size="10Gi"
 
         )
-        context.default_container_resources = resources
-
         # Setup execution handler and assign context with resource limits
-        execution_handler = SimpleExecutionHandler(conf=conf, resources=resources)
+        execution_handler = SimpleExecutionHandler(conf=conf)
         execution_handler.context = context
 
         # Create the runner
