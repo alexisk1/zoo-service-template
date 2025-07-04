@@ -74,6 +74,10 @@ class SimpleExecutionHandler(ExecutionHandler):
             "PROCESS_ID": self.conf["lenv"]["usid"]
         }
 
+    def get_pod_node_selector(self):
+        logger.info("get_pod_node_selector")
+        node_selector = {}
+        return node_selector
 
     def get_additional_parameters(self):
         logger.info("get_additional_parameters")
